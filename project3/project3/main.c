@@ -55,10 +55,10 @@ struct command_input *g_command_input;
 int main()
 {
 	lcd_init_printf();
-	clear();
-	printf("Test");
-	delay_ms(1000);
-	clear();
+	//clear();
+	//printf("Test");
+	//delay_ms(1000);
+	//clear();
 
 	// enable system interrupts
 	sei();
@@ -110,6 +110,7 @@ int main()
 	// formula to calculate OCR0A (TOP for this 8 bit timer) 20000000/(1024*(1000/g_tgt_on_time_ms_red)
 	// since 20M exceeds the storage of a 16 bit integer, we divide 20M/1024 = 19531.25
 	// which gives us a constant of 19531 after rounding (decision not to fool with floating point)
+	// NOTE: anything >13 causes an overflow of the 8 bit OCR0A register
 	OCR0A = 19531/(1000/g_tgt_on_time_ms_red);
 	
 	// enable the interrupt for the timer
@@ -231,6 +232,21 @@ int main()
 	
 	//Since we're in WGM1 mode of 14, TOP is from ICR1
 	ICR1 = 2*OCR1A; 
+	
+	// we want to generate an interrupt each time we match on output compare register 1 a
+	// TIMSK1 - Timer/counter interrupt mask register
+	//        -
+	//        -
+	// ICIE1  0
+	//        -
+	//        -
+	// OCIE1B -
+	// OCIE1A 1 - compare A match interrupt enabled
+	// TOI13  1 - timer1 overflow interrupt enabled 
+	// = 0000 0011
+	//    0    3
+	TIMSK1 = 0x03;
+	
 
 	/***** END PART 4 *****/
 	
@@ -292,6 +308,22 @@ ISR(TIMER3_COMPA_vect) {
 	sei();
 }
 
+/* ISRs for green LED */
+ISR(TIMER1_COMPA_vect) {
+	cli();
+	
+	g_count_green++;
+	
+	sei();	
+}
+
+ISR(TIMER1_OVF_vect) {
+	cli();
+	
+	g_count_green++;
+	
+	sei();
+}
 
 void process_command() {
 	uint16_t tgt_on_time_ms = atoi(g_command_input->command_blink_ms);
@@ -301,28 +333,28 @@ void process_command() {
 		switch(g_command_input->command_color) {
 			case COLOR_ALL:
 			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nR:%i Y:%i G:%i\r\n", g_count_red, g_count_yellow, g_count_green);
+			sprintf(serial_send_buffer, "\r\nR:%u Y:%u G:%u\r\n", g_count_red, g_count_yellow, g_count_green);
 			serial_wait_for_sending_to_finish();
 			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));			
 			break;
 			
 			case COLOR_RED:
 			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nR:%i\r\n", g_count_red);
+			sprintf(serial_send_buffer, "\r\nR:%u\r\n", g_count_red);
 			serial_wait_for_sending_to_finish();
 			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
 			break;
 			
 			case COLOR_YELLOW:
 			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nY:%i\r\n", g_count_yellow);
+			sprintf(serial_send_buffer, "\r\nY:%u\r\n", g_count_yellow);
 			serial_wait_for_sending_to_finish();
 			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
 			break;
 			
 			case COLOR_GREEN:
 			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nG:%i\r\n", g_count_green);
+			sprintf(serial_send_buffer, "\r\nG:%u\r\n", g_count_green);
 			serial_wait_for_sending_to_finish();
 			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
 			break;
