@@ -15,6 +15,9 @@
 #include <string.h>
 #include "serial.h"
 
+#undef BLINK_RED_BUSY_WAIT
+#define BLINK_RED_INTERRUPT
+
 /**** TODO - MOVE TO #include ****/
 #define FOR_COUNT_10MS 5585
 volatile uint32_t __ii;
@@ -34,9 +37,13 @@ volatile uint32_t __ii;
 volatile bool g_release_red_blink = false;
 
 // global counter variables for each LED blink
+volatile uint16_t g_blink_count_red = 0;
+volatile uint16_t g_blink_count_yellow = 0;
+volatile uint16_t g_blink_count_green = 0;
+
+// global count variables for red and yellow LED (since these will be multiples of 1ms and 100ms, respectively)
 volatile uint16_t g_count_red = 0;
 volatile uint16_t g_count_yellow = 0;
-volatile uint16_t g_count_green = 0;
 
 // global control variables for each color time
 volatile uint16_t g_tgt_on_time_ms_red = 10;
@@ -78,6 +85,7 @@ int main()
 	/***** END PART 1 *****/
 	
 	/***** PART 2 *****/
+#ifdef BLINK_RED_INTERRUPT
 	// set up 8 bit timer with 1ms resolution
 	
 	// TCCR0B - timer counter control register B
@@ -89,9 +97,9 @@ int main()
 	// CS02   1  - clock select - prescale /1024
 	// CS01   0
 	// CS00   1
-	// = 0000 0100
-	//    0    4
-	TCCR0B = 0x04;	
+	// = 0000 0101
+	//    0    5
+	TCCR0B = 0x05;	
 	
 		
 	// TCCR0A - timer counter control register A
@@ -111,7 +119,9 @@ int main()
 	// since 20M exceeds the storage of a 16 bit integer, we divide 20M/1024 = 19531.25
 	// which gives us a constant of 19531 after rounding (decision not to fool with floating point)
 	// NOTE: anything >13 causes an overflow of the 8 bit OCR0A register
-	OCR0A = 19531/(1000/g_tgt_on_time_ms_red);
+	//OCR0A = 19531/(1000/g_tgt_on_time_ms_red);
+	// UPDATE: I was interpreting the requirements wrong.  We'll fix the interrupts to fire at 1ms
+	OCR0A = 19531/(1000/1);
 	
 	// enable the interrupt for the timer
 	// TIMSK0 - Timer/counter interrupt mask register
@@ -125,7 +135,7 @@ int main()
 	// TOIE0  (dont change)
 	// = 0000 0010
 	TIMSK0 |= (1 << 1);
-	
+#endif	
 	
 	// Set PORTA2 (red) as output
 	DDRA |= (1 << 2);
@@ -165,11 +175,12 @@ int main()
 	//    8    0
 	TCCR3A = 0x80;
 	
-	// OCR3A - set to match on 7812 (hex 0x1e84)
-	//OCR3A = 0x1e84;
 	// formula to calculate OCR3A (TOP for this 16 bit timer) 20000000/(256*(1000/g_tgt_on_time_ms_yellow)
 	// since 20M exceeds the storage of a 16 bit integer, we divide 20M/256 = 78125
-	OCR3A = 78125/(1000/g_tgt_on_time_ms_yellow);
+	// UPDATE: I was interpreting the requirements wrong.  We'll fix the interrupts to fire at 100ms
+	//OCR3A = 78125/(1000/g_tgt_on_time_ms_yellow);
+	OCR3A = 78125/(1000/100);
+	
 	
 	// enable the interrupt for the timer
 	// TIMSK3 - Timer/counter interrupt mask register
@@ -227,7 +238,6 @@ int main()
 	// (g_tgt_on_time_ms_green*2/1000) converts ms to Hz - e.g., 500ms = 1Hz
 	// (1000/(g_tgt_on_time_ms_green*2)
 	// Uses formula from 16.10.2 on p.120
-	//OCR1A = (20000000/( (g_tgt_on_time_ms_green*2/1000) *2*1024))-1;
 	OCR1A = (20000000/( (1000/(g_tgt_on_time_ms_green*2)) *2*1024))-1;
 	
 	//Since we're in WGM1 mode of 14, TOP is from ICR1
@@ -260,22 +270,23 @@ int main()
 
 	while(1)
 	{
-		// set all timers
-		//   red
-		OCR0A = 19531/(1000/g_tgt_on_time_ms_red);
-		//   yellow
-		OCR3A = 78125/(1000/g_tgt_on_time_ms_yellow);
-		//   green
-		OCR1A = (20000000/( (1000/(g_tgt_on_time_ms_green*2)) *2*1024))-1;
-		ICR1 = 2*OCR1A;
-		
-
+#ifdef BLINK_RED_INTERRUPT
 		if(g_release_red_blink) {
 			g_release_red_blink = false;
 			// red is on PORTA0, toggle signal
 			PORTA ^= (1<<2);
-			g_count_red++;
+			g_blink_count_red++;
 		}
+#endif
+
+#ifdef BLINK_RED_BUSY_WAIT
+		for(int i=0;i<50;i++) {
+			WAIT_10MS
+		}
+		// red is on PORTA0, toggle signal
+		PORTA ^= (1<<2);
+		g_blink_count_red++;
+#endif
 		
 		// USB_COMM is always in SERIAL_CHECK mode, so we need to call this
 		// function often to make sure serial receptions and transmissions
@@ -287,23 +298,39 @@ int main()
 	}
 }
 
+#ifdef BLINK_RED_INTERRUPT
 /* ISR for red LED */
 ISR(TIMER0_COMPA_vect) {
 	cli();
 	
-	g_release_red_blink = true;
+	g_count_red++;
+	if(g_count_red == (g_tgt_on_time_ms_red/1)) {
+		g_release_red_blink = true;
+		g_count_red = 0;	
+	}
 	
 	sei();
 }
+#endif
 
 /* ISR for yellow LED */
 ISR(TIMER3_COMPA_vect) {
 	cli();
 	
-	// blink directly in the ISR per spec
-	PORTA ^= (1<<0);
+	// for experiment busy-wait in yellow LED ISR
+//	for(int i=0;i<51;i++) {
+//		WAIT_10MS
+//	}
 	
 	g_count_yellow++;
+	
+	if(g_count_yellow == (g_tgt_on_time_ms_yellow/100)) {
+		// blink directly in the ISR per spec
+		PORTA ^= (1<<0);
+		g_count_yellow = 0;
+		
+		g_blink_count_yellow++;
+	}
 	
 	sei();
 }
@@ -312,7 +339,12 @@ ISR(TIMER3_COMPA_vect) {
 ISR(TIMER1_COMPA_vect) {
 	cli();
 	
-	g_count_green++;
+	// for experiment busy-wait in green LED ISR
+//	for(int i=0;i<51;i++) {
+//		WAIT_10MS
+//	}
+	
+	g_blink_count_green++;
 	
 	sei();	
 }
@@ -320,7 +352,7 @@ ISR(TIMER1_COMPA_vect) {
 ISR(TIMER1_OVF_vect) {
 	cli();
 	
-	g_count_green++;
+	g_blink_count_green++;
 	
 	sei();
 }
@@ -330,87 +362,91 @@ void process_command() {
 	
 	switch(g_command_input->command_code) {
 		case COMMAND_PRINT:
-		switch(g_command_input->command_color) {
-			case COLOR_ALL:
-			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nR:%u Y:%u G:%u\r\n", g_count_red, g_count_yellow, g_count_green);
-			serial_wait_for_sending_to_finish();
-			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));			
-			break;
+			switch(g_command_input->command_color) {
+				case COLOR_ALL:
+					memset(serial_send_buffer,0,sizeof(serial_send_buffer));
+					sprintf(serial_send_buffer, "\r\nR:%u Y:%u G:%u\r\n", g_blink_count_red, g_blink_count_yellow, g_blink_count_green);
+					serial_wait_for_sending_to_finish();
+					serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));			
+				break;
 			
-			case COLOR_RED:
-			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nR:%u\r\n", g_count_red);
-			serial_wait_for_sending_to_finish();
-			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
-			break;
+				case COLOR_RED:
+					memset(serial_send_buffer,0,sizeof(serial_send_buffer));
+					sprintf(serial_send_buffer, "\r\nR:%u\r\n", g_blink_count_red);
+					serial_wait_for_sending_to_finish();
+					serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
+				break;
 			
-			case COLOR_YELLOW:
-			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nY:%u\r\n", g_count_yellow);
-			serial_wait_for_sending_to_finish();
-			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
-			break;
+				case COLOR_YELLOW:
+					memset(serial_send_buffer,0,sizeof(serial_send_buffer));
+					sprintf(serial_send_buffer, "\r\nY:%u\r\n", g_blink_count_yellow);
+					serial_wait_for_sending_to_finish();
+					serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
+				break;
 			
-			case COLOR_GREEN:
-			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-			sprintf(serial_send_buffer, "\r\nG:%u\r\n", g_count_green);
-			serial_wait_for_sending_to_finish();
-			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
-			break;
-		}
+				case COLOR_GREEN:
+					memset(serial_send_buffer,0,sizeof(serial_send_buffer));
+					sprintf(serial_send_buffer, "\r\nG:%u\r\n", g_blink_count_green);
+					serial_wait_for_sending_to_finish();
+					serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
+				break;
+			}
 		break;
 		
 		case COMMAND_ZERO:
-		switch(g_command_input->command_color) {
-			case COLOR_ALL:
-			g_count_red = 0;
-			g_count_yellow = 0;
-			g_count_green = 0;
-			break;
+			switch(g_command_input->command_color) {
+				case COLOR_ALL:
+					g_blink_count_red = 0;
+					g_blink_count_yellow = 0;
+					g_blink_count_green = 0;
+				break;
 			
-			case COLOR_RED:
-			g_count_red = 0;
-			break;
+				case COLOR_RED:
+					g_blink_count_red = 0;
+				break;
 			
-			case COLOR_YELLOW:
-			g_count_yellow = 0;
-			break;
+				case COLOR_YELLOW:
+					g_blink_count_yellow = 0;
+				break;
 			
-			case COLOR_GREEN:
-			g_count_green = 0;
-			break;
-		}
-		memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-		sprintf(serial_send_buffer, "\r\nZero Complete\r\n");
-		serial_wait_for_sending_to_finish();
-		serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
+				case COLOR_GREEN:
+					g_blink_count_green = 0;
+				break;
+			}
+			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
+			sprintf(serial_send_buffer, "\r\nZero Complete\r\n");
+			serial_wait_for_sending_to_finish();
+			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
 		break;
 		
 		case COMMAND_TOGGLE:
-		switch(g_command_input->command_color) {
-			case COLOR_ALL:
-			g_tgt_on_time_ms_red = tgt_on_time_ms;
-			g_tgt_on_time_ms_yellow = tgt_on_time_ms;
-			g_tgt_on_time_ms_green = tgt_on_time_ms;
-			break;
+			switch(g_command_input->command_color) {
+				case COLOR_ALL:
+					g_tgt_on_time_ms_red = tgt_on_time_ms;
+					g_tgt_on_time_ms_yellow = tgt_on_time_ms;
+					g_tgt_on_time_ms_green = tgt_on_time_ms;
+				break;
 			
-			case COLOR_RED:
-			g_tgt_on_time_ms_red = tgt_on_time_ms;
-			break;
+				case COLOR_RED:
+					g_tgt_on_time_ms_red = tgt_on_time_ms;
+				break;
 			
-			case COLOR_YELLOW:
-			g_tgt_on_time_ms_yellow = tgt_on_time_ms;
-			break;
+				case COLOR_YELLOW:
+					g_tgt_on_time_ms_yellow = tgt_on_time_ms;
+				break;
 			
-			case COLOR_GREEN:
-			g_tgt_on_time_ms_green = tgt_on_time_ms;
-			break;
-		}
-		memset(serial_send_buffer,0,sizeof(serial_send_buffer));
-		sprintf(serial_send_buffer, "\r\nToggle Complete\r\n");
-		serial_wait_for_sending_to_finish();
-		serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
+				case COLOR_GREEN:
+					g_tgt_on_time_ms_green = tgt_on_time_ms;
+				break;
+			}
+			// just in case they updated the green rate, let's update the compare registers for the PWM
+			OCR1A = (20000000/( (1000/(g_tgt_on_time_ms_green*2)) *2*1024))-1;
+			ICR1 = 2*OCR1A;
+			
+			memset(serial_send_buffer,0,sizeof(serial_send_buffer));
+			sprintf(serial_send_buffer, "\r\nToggle Complete\r\n");
+			serial_wait_for_sending_to_finish();
+			serial_send(USB_COMM, serial_send_buffer, strlen(serial_send_buffer));
 		break;
 	}
 	
@@ -420,43 +456,42 @@ void process_command() {
 
 void serial_process_received_byte(char byte)
 {
-	switch(byte)
-	{
+	switch(byte) {
 		// If the character z,Z,p,P,t,T received, then we are dealing with a command code
 		case 'z':
 		case 'Z':
-		g_command_input->command_code = COMMAND_ZERO;
+			g_command_input->command_code = COMMAND_ZERO;
 		break;
 		
 		case 'p':
 		case 'P':
-		g_command_input->command_code = COMMAND_PRINT;
+			g_command_input->command_code = COMMAND_PRINT;
 		break;
 		
 		case 't':
 		case 'T':
-		g_command_input->command_code = COMMAND_TOGGLE;
+			g_command_input->command_code = COMMAND_TOGGLE;
 		break;
 		
 		// If the character r,R,y,Y,g,G,a,A received, then we are dealing with a color code
 		case 'r':
 		case 'R':
-		g_command_input->command_color = COLOR_RED;
+			g_command_input->command_color = COLOR_RED;
 		break;
 		
 		case 'y':
 		case 'Y':
-		g_command_input->command_color = COLOR_YELLOW;
+			g_command_input->command_color = COLOR_YELLOW;
 		break;
 		
 		case 'g':
 		case 'G':
-		g_command_input->command_color = COLOR_GREEN;
+			g_command_input->command_color = COLOR_GREEN;
 		break;
 		
 		case 'a':
 		case 'A':
-		g_command_input->command_color = COLOR_ALL;
+			g_command_input->command_color = COLOR_ALL;
 		break;
 		
 		case '0':
@@ -469,12 +504,12 @@ void serial_process_received_byte(char byte)
 		case '7':
 		case '8':
 		case '9':
-		g_command_input->command_blink_ms[g_command_input->command_blink_ms_pos] = byte;
-		g_command_input->command_blink_ms_pos++;
+			g_command_input->command_blink_ms[g_command_input->command_blink_ms_pos] = byte;
+			g_command_input->command_blink_ms_pos++;
 		break;
 		
 		case '\r':
-		process_command();
+			process_command();
 		break;
 		
 	}
