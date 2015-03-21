@@ -14,13 +14,14 @@ volatile int16_t g_counts_m1 = 0;
 // flag set in ISR to toggle LCD update in cyclic executive
 volatile bool doLcdUpdate = false;
 
+// speed variables
+volatile int16_t g_speed_calc_prev_encoder_val = 0;
+volatile int16_t g_speed_calc_current_speed = 0;
+
 // prototypes for init functions
 void init_timer0();
 void init_timer3();
 void init_encoder();
-
-unsigned long g_rotation_start_time = 0;
-volatile unsigned long g_rotation_end_time = 0;
 
 int main()
 {
@@ -31,36 +32,23 @@ int main()
 	
 	// initialize stuff
 	init_timer0();
-	//init_timer3();
+	init_timer3();
 	init_encoder();
 	
-	// speed of motor, values from -255 to +255
-	int16_t motor_speed = 0;
+	// motor drive signal, values from -255 to +255
+	int16_t motor_drive_signal = 0;
 	
 	// var to store button press - declared outside of loop to reduce allocation overhead
 	unsigned char button_pressed;
-	
-	motor_speed = 255; // about the slowest we can go and overcome static friction of motor and gearbox
-	
-	
-	set_m1_speed(motor_speed);
-	
-
-	unsigned long elapsed_time_us = 0;
-	
-	
+		
 	while(1)
-	{
-			if(g_rotation_end_time > 0) {
-				elapsed_time_us = ticks_to_microseconds((g_rotation_end_time-g_rotation_start_time)/100UL);	
-			}
-			
+	{			
 		if(doLcdUpdate) {
 			clear();
 			lcd_goto_xy(0,0);
-			//printf("Speed:%d\n",motor_speed);
-			//printf("Encoder:%d",g_counts_m1);
-			printf("uS:%lu", elapsed_time_us);
+			printf("Dr:%d,Enc:%d\n",motor_drive_signal,g_counts_m1);
+			printf("Speed:%d",g_speed_calc_current_speed);
+
 			doLcdUpdate = false;
 		}
 		
@@ -68,24 +56,24 @@ int main()
 		
 		switch (button_pressed) {
 			case BUTTON_A:
-			motor_speed -= 5;
+			motor_drive_signal -= 5;
 			break;
 			case BUTTON_B:
-			motor_speed *= -1;
+			motor_drive_signal *= -1;
 			break;
 			case BUTTON_C:
-			motor_speed += 5;
+			motor_drive_signal += 5;
 			break;
 		}
 		
 
-		if(motor_speed > 255) {
-			motor_speed = 255;
-		} else if(motor_speed < -255) {
-			motor_speed = -255;
+		if(motor_drive_signal > 255) {
+			motor_drive_signal = 255;
+		} else if(motor_drive_signal < -255) {
+			motor_drive_signal = -255;
 		}
 		
-		set_m1_speed(motor_speed);
+		set_m1_speed(motor_drive_signal);
 
 	}
 }
@@ -141,7 +129,7 @@ void init_timer0() {
 }
 
 void init_timer3() {
-	// set up 16 bit timer with 250ms resolution
+	// set up 16 bit timer 
 	
 	// TCCR3B - timer counter control register B
 	// ICNC3  0
@@ -170,9 +158,9 @@ void init_timer3() {
 	TCCR3A = 0x80;
 	
 	// output compare register (from AVR Calc)
-	OCR3A = 0x1312; // 250ms
-	
-	
+	//OCR3A = 0x1312; // 250ms
+	//OCR3A = 0x00c2; // 10ms = 10,000us
+	OCR3A = 0x0013; // 1ms = 1,000us
 	
 	// enable the interrupt for the timer
 	// TIMSK3 - Timer/counter interrupt mask register
@@ -186,6 +174,7 @@ void init_timer3() {
 	// TOIE3  (dont change)
 	// = 0000 0010
 	TIMSK3 |= (1 << 1);
+
 }
 
 void init_encoder() {
@@ -257,13 +246,6 @@ ISR(PCINT3_vect) {
 	// and save state for next ISR run
 	g_last_m1a_val = m1a_val;
 	g_last_m1b_val = m1b_val;
-	
-	// try to throw away the first rotation because it may skew results based on static friction
-	if(g_counts_m1 == 48) {
-		g_rotation_start_time = get_ticks();
-	} else if(g_counts_m1 == 48 * 101) {
-		g_rotation_end_time = get_ticks();
-	}
 }
 
 
@@ -274,5 +256,7 @@ ISR(TIMER0_COMPA_vect) {
 
 // ISR for timer 3
 ISR(TIMER3_COMPA_vect) {
-	
+	// calculate the current speed
+	g_speed_calc_current_speed = (g_counts_m1 - g_speed_calc_prev_encoder_val) / 1; // denominator must match resolution of timer
+	g_speed_calc_prev_encoder_val = g_counts_m1;
 }
