@@ -16,7 +16,13 @@
 #include "init.h"
 
 // absolute encoder counts since program initialization
-volatile int16_t g_counts_m1 = 0;
+volatile int g_counts_m1 = 0;
+
+// set to true if the g_counts_m1 gets overflowed 
+volatile bool g_counts_m1_overflowed = false;
+
+// set to true if the g_counts_m1 gets underflowed
+volatile bool g_counts_m1_underflowed = false;
 
 // flag set in ISR to toggle LCD update in cyclic executive
 volatile bool g_releaseLcdUpdate = false;
@@ -25,8 +31,8 @@ volatile bool g_releaseLcdUpdate = false;
 volatile bool g_releaseSpeedPID = false;
 
 // speed variables
-volatile long g_speed_calc_prev_encoder_val = 0;
-volatile long g_speed_calc_current_speed = 0;
+volatile int g_speed_calc_prev_encoder_val = 0;
+volatile int g_speed_calc_current_speed = 0;
 
 int main()
 {
@@ -41,8 +47,6 @@ int main()
 	init_timer3();
 	init_encoder();
 	
-	printf("poop");
-	
 	// var to store button press - declared outside of loop to reduce allocation overhead
 	unsigned char button_pressed;
 	
@@ -54,13 +58,16 @@ int main()
 	double drive = 0.0;
 	
 	double speedCommand = 2500.0;
+	
 	while(1)
 	{			
 		if(g_releaseLcdUpdate) {
 			clear();
 			lcd_goto_xy(0,0);
-			printf("Speed:%d\n",g_speed_calc_current_speed);
-			printf("Drive:%.1f",drive);
+
+			printf("S:%d E:%d\n",g_speed_calc_current_speed, g_counts_m1);
+			printf("C:%.0f D:%.1f",speedCommand, drive);
+			
 			g_releaseLcdUpdate = false;
 		}
 		
@@ -79,13 +86,13 @@ int main()
 		
 		switch (button_pressed) {
 			case BUTTON_A:
-			adjust_m1_torque(-5);
+			speedCommand -= 100;
 			break;
 			case BUTTON_B:
-			reverse_m1_torque();
+			speedCommand *= -1;
 			break;
 			case BUTTON_C:
-			adjust_m1_torque(5);
+			speedCommand += 100;
 			break;
 		}
 	}
@@ -109,9 +116,17 @@ ISR(PCINT3_vect) {
 
 	// increment or decrement encoder count
 	if(plus_m1) {
+		if((g_counts_m1 + 1) < g_counts_m1) {
+			g_counts_m1_overflowed = true;
+		}
+		
 		g_counts_m1++;
 	}
 	if(minus_m1) {
+		if((g_counts_m1 - 1) > g_counts_m1) {
+			g_counts_m1_underflowed = true;
+		}
+		
 		g_counts_m1--;
 	}
 
@@ -128,23 +143,26 @@ ISR(TIMER0_COMPA_vect) {
 }
 
 // ISR for timer 3
-volatile uint8_t speedPIDReleaseCounter = 0;
+volatile unsigned int speedPIDReleaseCounter = 0;
 ISR(TIMER3_COMPA_vect) {
 	// calculate the current speed and adjust for encoder count overflows
 	// NOTE: if you don't do this, there is risk of getting a wildly inaccurate
 	//	reading from time to time.  Depending on the timing of this inaccurate
 	//	reading and the configuration of the PID controller, it could result in
 	//	a violent jerk of the motor.
-	if(g_counts_m1 > g_speed_calc_prev_encoder_val) {
-		// we have not experienced an overflow, so actually calculate the speed
-		g_speed_calc_current_speed = (g_counts_m1 - g_speed_calc_prev_encoder_val) * 10L; // since we're on a 100ms timer, need to multiply by 10 to get counts/sec
-		} else {
-		// we have experienced an overflow, so lie like a rug
+	if(g_counts_m1_overflowed || g_counts_m1_underflowed) {
+		// we have experienced an overflow/underflow, so lie like a rug
 		// pretend that the speed has not changed since last time
 		g_speed_calc_current_speed = g_speed_calc_current_speed;
+		
+		// and reset the overflow/underflow flags
+		g_counts_m1_overflowed = false;
+		g_counts_m1_underflowed = false;
+	} else {
+		// we have not experienced an overflow, so actually calculate the speed
+		g_speed_calc_current_speed = (g_counts_m1 - g_speed_calc_prev_encoder_val) * 10; // since we're on a 100ms timer, need to multiply by 10 to get counts/sec
 	}
 	g_speed_calc_prev_encoder_val = g_counts_m1;
-	
 	
 	// release the speed PID controller
 	speedPIDReleaseCounter++;
