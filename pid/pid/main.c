@@ -34,10 +34,10 @@ volatile bool g_releaseSpeedPID = false;
 // speed variables
 volatile int g_speed_calc_prev_encoder_val = 0;
 volatile int g_speed_calc_current_speed = 0;
-	
+
 int main()
 {
-	play_from_program_space(PSTR(">g32>>c32"));  // Play welcoming notes.
+	//play_from_program_space(PSTR(">g32>>c32"));  // Play welcoming notes.
 	
 	lcd_init_printf();
 	clear();
@@ -51,16 +51,18 @@ int main()
 	// var to store button press - declared outside of loop to reduce allocation overhead
 	unsigned char button_pressed;
 	
-	// set up our speed PID
-	SPid speedPID;
-	memset(&speedPID, 0, sizeof(speedPID)); // zero everything out, just for good measure
-	serial_speedPID = &speedPID;  // make our serial pointer overlay the actual speed PID
-	speedPID.pGain = 0.05;
+	// set up our PID
+	//SPid myPID;
+	myPID = calloc(1,sizeof(SPid));
+	memset(myPID, 0, sizeof(myPID)); // zero everything out, just for good measure
+	myPID->pGain = 0.05;
+	myPID->iMax = 1000.0;
+	myPID->iMin = -1000.0;
 	
 	double drive = 0.0;
 	
 	//double speedCommand = 2500.0;
-	speedPID.command = 2500.0;
+	myPID->command = 0.0;
 	
 	// set up memory for our command input
 	g_command_input = calloc(1,sizeof(struct command_input));
@@ -80,16 +82,22 @@ int main()
 			lcd_goto_xy(0,0);
 
 			printf("S:%d E:%d\n",g_speed_calc_current_speed, g_counts_m1);
-			printf("C:%.0f D:%.1f",speedPID.command, drive);
+			printf("C:%.0f D:%.1f",myPID->command, drive);
 			
 			g_releaseLcdUpdate = false;
 		}
 		
 		if(g_releaseSpeedPID) {
 			
-			drive = updatePID(&speedPID,
-				(speedPID.command - g_speed_calc_current_speed),
-				g_speed_calc_current_speed);
+			if(myPID->mode == PID_MODE_SPEED) {
+				myPID->measured = g_speed_calc_current_speed;
+			} else if(myPID->mode == PID_MODE_POSITION) {
+				myPID->measured = g_counts_m1;
+			}
+			
+			drive = updatePID(myPID,
+					(myPID->command - myPID->measured),
+					myPID->measured);
 			
 			adjust_m1_torque((int)drive);
 			
@@ -100,13 +108,13 @@ int main()
 		
 		switch (button_pressed) {
 			case BUTTON_A:
-			speedPID.command -= 100;
+			myPID->command -= 100;
 			break;
 			case BUTTON_B:
-			speedPID.command *= -1;
+			myPID->command *= -1;
 			break;
 			case BUTTON_C:
-			speedPID.command += 100;
+			myPID->command += 100;
 			break;
 		}
 		

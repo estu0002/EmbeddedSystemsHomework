@@ -8,6 +8,9 @@
 #ifndef PID_H_
 #define PID_H_
 
+#define PID_MODE_SPEED 0
+#define PID_MODE_POSITION 1
+
 typedef struct {
 	double dState;		// last position input
 	double iState;		// integrator state
@@ -16,7 +19,11 @@ typedef struct {
 	double iGain;		// integral gain
 	double dGain;		// differential gain
 	double command;		// the command we're going for
+	int measured;		// the measured value we've got
+	int mode;			// 0 for speed, 1 for position
 } SPid;
+
+SPid *myPID;
 
 double updatePID(SPid *pid, double error, double position) {
 	double pTerm;
