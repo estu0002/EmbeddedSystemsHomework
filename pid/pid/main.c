@@ -14,6 +14,7 @@
 #include "motorDriveSignal.h"
 #include "pid.h"
 #include "init.h"
+#include "serial.h"
 
 // absolute encoder counts since program initialization
 volatile int g_counts_m1 = 0;
@@ -33,7 +34,7 @@ volatile bool g_releaseSpeedPID = false;
 // speed variables
 volatile int g_speed_calc_prev_encoder_val = 0;
 volatile int g_speed_calc_current_speed = 0;
-
+	
 int main()
 {
 	play_from_program_space(PSTR(">g32>>c32"));  // Play welcoming notes.
@@ -53,11 +54,24 @@ int main()
 	// set up our speed PID
 	SPid speedPID;
 	memset(&speedPID, 0, sizeof(speedPID)); // zero everything out, just for good measure
+	serial_speedPID = &speedPID;  // make our serial pointer overlay the actual speed PID
 	speedPID.pGain = 0.05;
 	
 	double drive = 0.0;
 	
-	double speedCommand = 2500.0;
+	//double speedCommand = 2500.0;
+	speedPID.command = 2500.0;
+	
+	// set up memory for our command input
+	g_command_input = calloc(1,sizeof(struct command_input));
+	
+	// boiler plate serial initialization stuff
+	// Set the baud rate to 9600 bits per second.  Each byte takes ten bit
+	// times, so you can get at most 960 bytes per second at this speed.
+	serial_set_baud_rate(USB_COMM, 9600);
+
+	// Start receiving bytes in the ring buffer.
+	serial_receive_ring(USB_COMM, receive_buffer, sizeof(receive_buffer));
 	
 	while(1)
 	{			
@@ -66,7 +80,7 @@ int main()
 			lcd_goto_xy(0,0);
 
 			printf("S:%d E:%d\n",g_speed_calc_current_speed, g_counts_m1);
-			printf("C:%.0f D:%.1f",speedCommand, drive);
+			printf("C:%.0f D:%.1f",speedPID.command, drive);
 			
 			g_releaseLcdUpdate = false;
 		}
@@ -74,7 +88,7 @@ int main()
 		if(g_releaseSpeedPID) {
 			
 			drive = updatePID(&speedPID,
-				(speedCommand - g_speed_calc_current_speed),
+				(speedPID.command - g_speed_calc_current_speed),
 				g_speed_calc_current_speed);
 			
 			adjust_m1_torque((int)drive);
@@ -86,15 +100,23 @@ int main()
 		
 		switch (button_pressed) {
 			case BUTTON_A:
-			speedCommand -= 100;
+			speedPID.command -= 100;
 			break;
 			case BUTTON_B:
-			speedCommand *= -1;
+			speedPID.command *= -1;
 			break;
 			case BUTTON_C:
-			speedCommand += 100;
+			speedPID.command += 100;
 			break;
 		}
+		
+		// USB_COMM is always in SERIAL_CHECK mode, so we need to call this
+		// function often to make sure serial receptions and transmissions
+		// occur.
+		serial_check();
+
+		// Deal with any new bytes received.
+		serial_check_for_new_bytes_received();
 	}
 }
 

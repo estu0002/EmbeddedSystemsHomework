@@ -15,6 +15,7 @@ typedef struct {
 	double pGain;		// proportional gain
 	double iGain;		// integral gain
 	double dGain;		// differential gain
+	double command;		// the command we're going for
 } SPid;
 
 double updatePID(SPid *pid, double error, double position) {
