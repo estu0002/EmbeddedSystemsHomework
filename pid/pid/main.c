@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+#include "motorPwm.h"
 #include "motorDriveSignal.h"
 #include "pid.h"
 #include "init.h"
@@ -48,13 +49,16 @@ int main()
 	init_timer3();
 	init_encoder();
 	
+	// initialize motor PWM
+	init_motor_pwm();
+	
 	// var to store button press - declared outside of loop to reduce allocation overhead
 	unsigned char button_pressed;
 	
 	// set up our PID
 	//SPid myPID;
 	myPID = calloc(1,sizeof(SPid));
-	memset(myPID, 0, sizeof(myPID)); // zero everything out, just for good measure
+	memset(myPID, 0, sizeof(SPid)); // zero everything out, just for good measure
 	myPID->pGain = 0.05;
 	myPID->iMax = 1000.0;
 	myPID->iMin = -1000.0;

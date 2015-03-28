@@ -30,7 +30,7 @@ void set_m1_torque(int16_t torqueToSet) {
 		current_m1_torque = torqueToSet;
 	}
 	
-	set_m1_speed(current_m1_torque);
+	my_set_m1_speed(current_m1_torque);
 }
 
 void reverse_m1_torque() {
