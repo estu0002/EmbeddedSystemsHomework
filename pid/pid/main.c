@@ -38,11 +38,10 @@ volatile int g_speed_calc_current_speed = 0;
 
 int main()
 {
-	//play_from_program_space(PSTR(">g32>>c32"));  // Play welcoming notes.
+	play_from_program_space(PSTR(">g32>>c32"));  // Play welcoming notes.
 	
 	lcd_init_printf();
 	clear();
-	printf("test");
 	
 	// initialize stuff
 	init_timer0();
@@ -56,25 +55,31 @@ int main()
 	unsigned char button_pressed;
 	
 	// set up our PID
-	//SPid myPID;
-	myPID = calloc(1,sizeof(SPid));
+	myPID = calloc(1, sizeof(SPid));
 	memset(myPID, 0, sizeof(SPid)); // zero everything out, just for good measure
+	
+	// seed the PID with some default values
 	myPID->pGain = 0.05;
 	myPID->iMax = 1000.0;
 	myPID->iMin = -1000.0;
 	
-	double drive = 0.0;
-	
-	//double speedCommand = 2500.0;
+	// command is what we're trying to get our system to do
 	myPID->command = 0.0;
 	
 	// set up memory for our command input
-	g_command_input = calloc(1,sizeof(struct command_input));
+	g_command_input = calloc(1, sizeof(struct command_input));
+	
+	// set up max number of log records
+	myPID->log_max_records = 500;
+	
+	// set up memory for our logging and zero it out
+	myPID->log_data = calloc(myPID->log_max_records, sizeof(PIDlog));
+	memset(myPID->log_data, 0, myPID->log_max_records*sizeof(PIDlog));
 	
 	// boiler plate serial initialization stuff
 	// Set the baud rate to 9600 bits per second.  Each byte takes ten bit
 	// times, so you can get at most 960 bytes per second at this speed.
-	serial_set_baud_rate(USB_COMM, 9600);
+	serial_set_baud_rate(USB_COMM, 115200);
 
 	// Start receiving bytes in the ring buffer.
 	serial_receive_ring(USB_COMM, receive_buffer, sizeof(receive_buffer));
@@ -86,24 +91,38 @@ int main()
 			lcd_goto_xy(0,0);
 
 			printf("S:%d E:%d\n",g_speed_calc_current_speed, g_counts_m1);
-			printf("C:%.0f D:%.1f",myPID->command, drive);
+			printf("C:%d D:%d",myPID->command, myPID->drive);
 			
 			g_releaseLcdUpdate = false;
 		}
 		
 		if(g_releaseSpeedPID) {
 			
+			// set our measured value based on current mode
 			if(myPID->mode == PID_MODE_SPEED) {
 				myPID->measured = g_speed_calc_current_speed;
 			} else if(myPID->mode == PID_MODE_POSITION) {
 				myPID->measured = g_counts_m1;
 			}
 			
-			drive = updatePID(myPID,
+			// calculate the drive for the motor
+			myPID->drive = updatePID(myPID,
 					(myPID->command - myPID->measured),
 					myPID->measured);
 			
-			adjust_m1_torque((int)drive);
+			// log the current state of things
+			if(myPID->logging_is_enabled) {
+				if(myPID->log_pos < myPID->log_max_records) {
+					myPID->log_data[myPID->log_pos].command = myPID->command;
+					myPID->log_data[myPID->log_pos].measured = myPID->measured;
+					myPID->log_data[myPID->log_pos].drive = myPID->drive;
+				
+					myPID->log_pos++;
+				}
+			}
+			
+			// update the motor torque signal
+			adjust_m1_torque(myPID->drive);
 			
 			g_releaseSpeedPID = false;
 		}
@@ -199,9 +218,11 @@ ISR(TIMER3_COMPA_vect) {
 	g_speed_calc_prev_encoder_val = g_counts_m1;
 	
 	// release the speed PID controller
-	speedPIDReleaseCounter++;
+/*	speedPIDReleaseCounter++;
 	if(speedPIDReleaseCounter == 2) {
 		speedPIDReleaseCounter = 0;
 		g_releaseSpeedPID = true;
 	}
+*/
+	g_releaseSpeedPID = true;
 }

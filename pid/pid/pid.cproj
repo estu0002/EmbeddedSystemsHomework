@@ -127,6 +127,9 @@
     <Compile Include="motorDriveSignal.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="motorPwm.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="pid.h">
       <SubType>compile</SubType>
     </Compile>
