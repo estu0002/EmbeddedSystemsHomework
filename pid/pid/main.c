@@ -6,6 +6,12 @@
  *  Author: Jesse
  */
 
+#define ASSIGNMENT_PART_2      
+/* DEFINED: set timer 3 to 10ms
+								  UNDEFD: set timer 3 to 100ms */
+#undef PID_RELEASE_EVERY_10TH 
+/* DEFINED: release the PID loop every 10th time TIMER3 fires
+								  UNDEFD: release the PID loop every time TIMER3 fires */
 
 #include <pololu/orangutan.h>
 #include <stdio.h>
@@ -30,7 +36,7 @@ volatile bool g_counts_m1_underflowed = false;
 volatile bool g_releaseLcdUpdate = false;
 
 // flag set in ISR to toggle release of speedPID in cyclic executive
-volatile bool g_releaseSpeedPID = false;
+volatile bool g_releasePID = false;
 
 // speed variables
 volatile int g_speed_calc_prev_encoder_val = 0;
@@ -59,9 +65,9 @@ int main()
 	memset(myPID, 0, sizeof(SPid)); // zero everything out, just for good measure
 	
 	// seed the PID with some default values
-	myPID->pGain = 0.05;
-	myPID->iMax = 1000.0;
-	myPID->iMin = -1000.0;
+	myPID->pGain = 4.0;
+	myPID->iMax = 500.0;
+	myPID->iMin = -500.0;
 	
 	// command is what we're trying to get our system to do
 	myPID->command = 0.0;
@@ -91,12 +97,13 @@ int main()
 			lcd_goto_xy(0,0);
 
 			printf("S:%d E:%d\n",g_speed_calc_current_speed, g_counts_m1);
+			//printf("C:%d D:%d M:%d",myPID->command, myPID->drive, myPID->measured);
 			printf("C:%d D:%d",myPID->command, myPID->drive);
 			
 			g_releaseLcdUpdate = false;
 		}
 		
-		if(g_releaseSpeedPID) {
+		if(g_releasePID) {
 			
 			// set our measured value based on current mode
 			if(myPID->mode == PID_MODE_SPEED) {
@@ -122,9 +129,16 @@ int main()
 			}
 			
 			// update the motor torque signal
-			adjust_m1_torque(myPID->drive);
+			if(myPID->mode == PID_MODE_SPEED) {
+				// for speed mode, we want to sustain speed so use incremental adjustments
+				adjust_m1_torque(myPID->drive);				
+			} else if(myPID->mode == PID_MODE_POSITION) {
+				// for position mode, we want to get that signal down to zero fast, so use an absolute value
+				set_m1_torque(myPID->drive);
+			}
+
 			
-			g_releaseSpeedPID = false;
+			g_releasePID = false;
 		}
 		
 		button_pressed = get_single_debounced_button_press(ANY_BUTTON);
@@ -196,7 +210,7 @@ ISR(TIMER0_COMPA_vect) {
 }
 
 // ISR for timer 3
-volatile unsigned int speedPIDReleaseCounter = 0;
+volatile unsigned int PIDReleaseCounter = 0;
 ISR(TIMER3_COMPA_vect) {
 	// calculate the current speed and adjust for encoder count overflows
 	// NOTE: if you don't do this, there is risk of getting a wildly inaccurate
@@ -213,16 +227,22 @@ ISR(TIMER3_COMPA_vect) {
 		g_counts_m1_underflowed = false;
 	} else {
 		// we have not experienced an overflow, so actually calculate the speed
+#ifndef ASSIGNMENT_PART_2
 		g_speed_calc_current_speed = (g_counts_m1 - g_speed_calc_prev_encoder_val) * 10; // since we're on a 100ms timer, need to multiply by 10 to get counts/sec
+#else
+		g_speed_calc_current_speed = (g_counts_m1 - g_speed_calc_prev_encoder_val) * 100; // since we're on a 10ms timer, need to multiply by 100 to get counts/sec
+#endif
 	}
 	g_speed_calc_prev_encoder_val = g_counts_m1;
 	
-	// release the speed PID controller
-/*	speedPIDReleaseCounter++;
-	if(speedPIDReleaseCounter == 2) {
-		speedPIDReleaseCounter = 0;
-		g_releaseSpeedPID = true;
+#ifdef PID_RELEASE_EVERY_10TH
+	// release the speed PID controller every 100ms; since we're on a 10ms timer, do it every 10th time
+	PIDReleaseCounter++;
+	if(PIDReleaseCounter == 10) {
+		PIDReleaseCounter = 0;
+		g_releasePID = true;
 	}
-*/
-	g_releaseSpeedPID = true;
+#else
+	g_releasePID = true;
+#endif
 }

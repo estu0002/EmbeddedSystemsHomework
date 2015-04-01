@@ -12,8 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PGAIN_INCREMENT	.05 // amount to increase/decrease pGain
-#define IGAIN_INCREMENT .01 // amount to increase/decrease iGain
+#define PGAIN_INCREMENT	.5 // amount to increase/decrease pGain
+#define IGAIN_INCREMENT .0001 // amount to increase/decrease iGain
 #define DGAIN_INCREMENT .1  // amount to increase/decrease dGain
 
 char receive_buffer[32];
@@ -122,7 +122,7 @@ void process_command() {
 			// Pr - desired value
 			// Pm - measured value
 			s_clear_send_buf();
-			sprintf(serial_send_buffer, "Kp:%.2f Ki:%.2f Kd:%.2f Pr:%d Pm:%d T:%d\n",
+			sprintf(serial_send_buffer, "Kp:%.3f Ki:%.4f Kd:%.2f Pr:%d Pm:%d T:%d\n",
 				myPID->pGain,
 				myPID->iGain,
 				myPID->dGain,

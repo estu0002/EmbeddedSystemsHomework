@@ -88,9 +88,13 @@ void init_timer3() {
 	
 	// output compare register (from AVR Calc)
 	//OCR3A = 0x1312; // 250ms
-	//OCR3A = 0x00c2; // 10ms = 10,000us
 	//OCR3A = 0x0013; // 1ms = 1,000us
+
+#ifdef ASSIGNMENT_PART_2
+	OCR3A = 0x00c2; // 10ms = 10,000us
+#else
 	OCR3A = 0x07a0; // 100ms
+#endif	
 	
 	// enable the interrupt for the timer
 	// TIMSK3 - Timer/counter interrupt mask register
