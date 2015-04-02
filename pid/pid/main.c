@@ -6,7 +6,7 @@
  *  Author: Jesse
  */
 
-#define ASSIGNMENT_PART_2      
+#undef ASSIGNMENT_PART_2      
 /* DEFINED: set timer 3 to 10ms
 								  UNDEFD: set timer 3 to 100ms */
 #undef PID_RELEASE_EVERY_10TH 
@@ -21,10 +21,12 @@
 #include "motorDriveSignal.h"
 #include "pid.h"
 #include "init.h"
-#include "serial.h"
 
 // absolute encoder counts since program initialization
 volatile int g_counts_m1 = 0;
+
+#include "interpolator.h"
+#include "serial.h"
 
 // set to true if the g_counts_m1 gets overflowed 
 volatile bool g_counts_m1_overflowed = false;
@@ -35,8 +37,11 @@ volatile bool g_counts_m1_underflowed = false;
 // flag set in ISR to toggle LCD update in cyclic executive
 volatile bool g_releaseLcdUpdate = false;
 
-// flag set in ISR to toggle release of speedPID in cyclic executive
+// flag set in ISR to toggle release of PID in cyclic executive
 volatile bool g_releasePID = false;
+
+// flag set in ISR to toggle release of trajectory interpolator in cyclic executive
+volatile bool g_releaseTrajectory = false;
 
 // speed variables
 volatile int g_speed_calc_prev_encoder_val = 0;
@@ -65,7 +70,8 @@ int main()
 	memset(myPID, 0, sizeof(SPid)); // zero everything out, just for good measure
 	
 	// seed the PID with some default values
-	myPID->pGain = 4.0;
+	myPID->pGain = 2.0;
+	myPID->dGain = 4.6;
 	myPID->iMax = 500.0;
 	myPID->iMin = -500.0;
 	
@@ -83,8 +89,6 @@ int main()
 	memset(myPID->log_data, 0, myPID->log_max_records*sizeof(PIDlog));
 	
 	// boiler plate serial initialization stuff
-	// Set the baud rate to 9600 bits per second.  Each byte takes ten bit
-	// times, so you can get at most 960 bytes per second at this speed.
 	serial_set_baud_rate(USB_COMM, 115200);
 
 	// Start receiving bytes in the ring buffer.
@@ -162,6 +166,49 @@ int main()
 
 		// Deal with any new bytes received.
 		serial_check_for_new_bytes_received();
+
+		if(g_releaseTrajectory) {		
+			// handle trajectory mode if we're in it
+			if(g_trajectory_mode) {
+				if(interp_current_target_index == -1) {
+					// we haven't started on our trajectory yet
+					// record the starting position
+					interp_start_pos = g_counts_m1;
+				
+					// and advance our index to the first trajectory
+					interp_current_target_index = 0;
+				}
+			
+			
+				if(abs(g_counts_m1 - myPID->command) <= 5) {
+					// we are where we wanted to be within our threshold
+					// (in this case we have just picked 5 to be that threshold)
+					
+					// grab the time right now
+					unsigned long now = get_ms();
+					if(interp_ms_at_trajectory == 0) {
+						interp_ms_at_trajectory = now;
+					} else if((now - interp_ms_at_trajectory) >= 500) {
+						// we have been at this trajectory for 500ms, let's go to the next one
+						myPID->command = interp_start_pos + interp_trajectory[interp_current_target_index];
+						
+						interp_current_target_index++;
+						interp_ms_at_trajectory = 0;
+						
+						if(interp_current_target_index == interp_trajectory_size) {
+							// we are done with our trajectories, so bail out of this mode
+							g_trajectory_mode = false;
+							
+							// and reset things in case we need to enter this mode again
+							interp_current_target_index = -1;
+						}
+					}									
+				}								
+			}
+			
+			g_releaseTrajectory = false;
+		}
+		
 	}
 }
 
@@ -245,4 +292,7 @@ ISR(TIMER3_COMPA_vect) {
 #else
 	g_releasePID = true;
 #endif
+
+	// release the trajectory interpolator
+	g_releaseTrajectory = true;
 }

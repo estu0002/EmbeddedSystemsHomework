@@ -121,6 +121,9 @@
     <Compile Include="init.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="interpolator.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="main.c">
       <SubType>compile</SubType>
     </Compile>

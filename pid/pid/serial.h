@@ -88,6 +88,18 @@ t: Execute trajectory
 void process_command() {
 	double ref_val = atof(g_command_input->command_ref_val);
 	switch(g_command_input->command_code) {
+		
+		case 't':
+		case 'T':
+			// we need to be in position mode to execute the trajectory
+			myPID->mode = PID_MODE_POSITION;
+			// and we should set our command to wherever we are currently at
+			myPID->command = g_counts_m1;
+			
+			// and enable trajectory mode
+			g_trajectory_mode = true;
+		break;
+		
 		case 'l':
 		case 'L':
 			if(myPID->logging_is_enabled) {
@@ -202,6 +214,8 @@ void serial_process_received_byte(char byte)
 		case 'd':
 		case 'I':
 		case 'i':
+		case 'T':
+		case 't':
 		g_command_input->command_code = byte;
 		break;
 		

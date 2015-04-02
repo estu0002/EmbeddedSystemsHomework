@@ -95,6 +95,8 @@ void init_timer3() {
 #else
 	OCR3A = 0x07a0; // 100ms
 #endif	
+
+	OCR3A = 0x07a0; // 250ms
 	
 	// enable the interrupt for the timer
 	// TIMSK3 - Timer/counter interrupt mask register
